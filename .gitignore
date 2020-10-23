@@ -50,3 +50,16 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+# Open swap files
+*.swp
+
+# build artifacts
+blst
+test_vectors
+test_eip2537
+
+# Rust build 
+Cargo.lock
+rust/target
+

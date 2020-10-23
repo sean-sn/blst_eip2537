@@ -650,8 +650,7 @@ int test_map_fp2_to_g2() {
 }
 
 int main() {
-  blst_fp x;
-
+  //blst_fp x;
   //printf("size of x %ld\n", sizeof(x));
   //printf("size of x.l %ld\n", sizeof(x.l));
   //printf("size of limb_t %ld\n", sizeof(limb_t));

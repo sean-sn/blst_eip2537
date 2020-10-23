@@ -30,7 +30,7 @@ if [ ! -d test_vectors ]; then
   cd ..
 fi
 
-gcc -Iblst/bindings src/eip2537.c src/test.c blst/libblst.a -o test_eip2537
+gcc -Wall -Iblst/bindings src/eip2537.c src/test.c blst/libblst.a -o test_eip2537
 
 ./test_eip2537
 

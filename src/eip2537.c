@@ -350,7 +350,7 @@ EIP2537_ERROR bls12_g1multiexp(byte out[128], byte* in, size_t in_len) {
   size_t k = in_len / 160;
 
   EIP2537_ERROR ret;
-  blst_p1 result = { {0}, {0}, {0} }; /* Infinity */
+  blst_p1 result = { {{0}}, {{0}}, {{0}} }; /* Infinity */
 
   for (size_t i = 0; i < k; ++i) {
     /* Decode inputs */
@@ -520,7 +520,9 @@ EIP2537_ERROR bls12_g2multiexp(byte out[256], byte* in, size_t in_len) {
   size_t k = in_len / 288;
 
   EIP2537_ERROR ret;
-  blst_p2 result = { {0, 0}, {0, 0}, {0, 0} }; /* Infinity */
+
+  /* Infinity */
+  blst_p2 result = { {{{{0}}, {{0}}}}, {{{{0}}, {{0}}}}, {{{{0}}, {{0}}}} };
 
   for (size_t i = 0; i < k; ++i) {
     /* Decode inputs */
