@@ -3,13 +3,25 @@ name = "blst_eip2537"
 version = "0.1.0"
 authors = ["sean-sn <sean@supranational.net>"]
 edition = "2018"
+license = "Apache-2.0"
+description = "Bindings for blst based EIP2537 library"
+repository = "https://github.com/sean-sn/blst_eip2537.git"
+readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-#blst = "0.2.0"
 hex = "0.4"
 csv = "1"
 
 [build-dependencies]
 cc = "1.0"
+
+[dev-dependencies]
+rand = "0.7"
+rand_chacha = "0.2"
+criterion = "0.3"
+
+[[bench]]
+name = "eip2537_benches"
+harness = false

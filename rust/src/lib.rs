@@ -250,6 +250,10 @@ mod tests {
             match value {
                 Ok(result) => {
                     if expected_output != result {
+                        println!(
+                            "MISMATCH: expected {:x?} received {:x?}",
+                            expected_output, result
+                        );
                         return false;
                     }
                 }
