@@ -259,7 +259,7 @@ EIP2537_ERROR bls12_g1add(byte out[128], const byte in[256], size_t in_len) {
 
   /* P = A + B */
   blst_p1 p;
-  blst_p1_add_affine(&p, &b, &a_aff);
+  blst_p1_add_or_double_affine(&p, &b, &a_aff);
 
   /* Convert point to affine */
   blst_p1_affine p_aff;
@@ -429,7 +429,7 @@ EIP2537_ERROR bls12_g2add(byte out[256], const byte in[512], size_t in_len) {
 
   /* P = A + B */
   blst_p2 p;
-  blst_p2_add_affine(&p, &b, &a_aff);
+  blst_p2_add_or_double_affine(&p, &b, &a_aff);
 
   /* Convert point to affine */
   blst_p2_affine p_aff;
