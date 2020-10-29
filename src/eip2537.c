@@ -668,7 +668,7 @@ EIP2537_ERROR bls12_map_fp_to_g1(byte out[128], const byte in[64],
   int fp_status = fp_from_bytes(&fp, in);
 
   /* Ensure field element is valid */
-  if (fp_status <= 0) {
+  if (fp_status < 0) {
     return EIP2537_INVALID_ELEMENT;
   }
 
@@ -710,7 +710,7 @@ EIP2537_ERROR bls12_map_fp2_to_g2(byte out[256], const byte in[128],
   int fp2_status = fp2_from_bytes(&fp2, in);
 
   /* Ensure field element is valid */
-  if (fp2_status <= 0) {
+  if (fp2_status < 0) {
     return EIP2537_INVALID_ELEMENT;
   }
 
