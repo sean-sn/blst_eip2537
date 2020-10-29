@@ -22,12 +22,14 @@ static void string_to_bytes(byte* out, const char* in, size_t num) {
 }
 
 /* Print array of bytes */
+/*
 static void print_bytes(const byte* in, size_t num) {
   for (size_t i = 0; i < num; ++i) {
     printf("%02x", in[i]);
   }
   printf("\n");
 }
+*/
 
 static int bytes_are_equal(const byte* a, const byte* b, size_t num) {
   const limb_t *ap = (const limb_t *)a;
