@@ -8,11 +8,16 @@ description = "Bindings for blst based EIP2537 library"
 repository = "https://github.com/sean-sn/blst_eip2537.git"
 readme = "README.md"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
-hex = "0.4"
-csv = "1"
+[features]
+# By default, compile with ADX extension if the host supports it.
+# Binary can be executed on systems similar to the host.
+default = []
+# Compile in portable mode, without ISA extensions.
+# Binary can be executed on all systems.
+portable = []
+# Enable ADX even if the host CPU doesn't support it.
+# Binary can be executed on Broadwell+ and Ryzen+ systems.
+force-adx = []
 
 [build-dependencies]
 cc = "1.0"
@@ -21,6 +26,8 @@ cc = "1.0"
 rand = "0.7"
 rand_chacha = "0.2"
 criterion = "0.3"
+hex = "0.4"
+csv = "1"
 
 [[bench]]
 name = "eip2537_benches"
