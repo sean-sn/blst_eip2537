@@ -8,7 +8,10 @@
 
 #include "blst.h"
 #include "eip2537.h"
-#include "math.h"
+#include <math.h>
+#include <string.h>
+
+#include <immintrin.h> /* TODO - make platform independent */
 
 /* Utility debug print functions */
 #include <stdio.h>
@@ -51,16 +54,213 @@ void print_blst_p1_affine(const blst_p1_affine* p_aff, const char* name) {
 }
 
 
+/* Heap functions used in Bos-Coster mutliscalar multiplication operations */
+
+/* Scalar comparison: Return 1 if a < b, 0 otherwise */
+/* TODO - make platform independent */
+static inline int compare_scalars(const blst_scalar* a, const blst_scalar* b) {
+  unsigned char c = 0;
+  long long unsigned int out;
+
+  c = _subborrow_u64(c, *((uint64_t*)a->b), *((uint64_t*)b->b), &out);
+  c = _subborrow_u64(c, *(((uint64_t*)a->b)+1), *(((uint64_t*)b->b)+1), &out);
+  c = _subborrow_u64(c, *(((uint64_t*)a->b)+2), *(((uint64_t*)b->b)+2), &out);
+  c = _subborrow_u64(c, *(((uint64_t*)a->b)+3), *(((uint64_t*)b->b)+3), &out);
+
+  return (c & 0x1);
+}
+
+/* Scalar subtraction: a = a - b */
+/* TODO - make platform independent */
+static inline int blst_scalar_sub_assign(blst_scalar* a, const blst_scalar* b) {
+  unsigned char c = 0;
+
+  c = _subborrow_u64(c, *((uint64_t*)a->b), *((uint64_t*)b->b),
+                     ((long long unsigned int*)a->b));
+  c = _subborrow_u64(c, *(((uint64_t*)a->b)+1), *(((uint64_t*)b->b)+1),
+                     ((long long unsigned int*)a->b) + 1);
+  c = _subborrow_u64(c, *(((uint64_t*)a->b)+2), *(((uint64_t*)b->b)+2),
+                     ((long long unsigned int*)a->b) + 2);
+  c = _subborrow_u64(c, *(((uint64_t*)a->b)+3), *(((uint64_t*)b->b)+3),
+                     ((long long unsigned int*)a->b) + 3);
+
+  return (c & 0x1);
+}
+
+/* Find MSB in scalar and return number of bits */
+/* TODO - make platform independent */
+static inline int blst_scalar_num_bits(const blst_scalar* a) {
+  for (int i = 3; i >= 0; i--) {
+    if (*(((uint64_t*)a->b) + i) != 0) {
+      return (64 * (i + 1)) - __builtin_clzll(*(((uint64_t*)a->b) + i));
+    }
+  }
+  return 0;
+}
 
 
+/* Struct to use in heap for scalar/base pair */
+typedef struct {
+  blst_scalar k;           /* scalar value */
+  uint32_t    base_index;  /* index into bases array of corresponding base */
+} blst_msm_scalar;
 
+/* Sift down */
+static void blst_scalars_max_siftdown(blst_msm_scalar* scalars,
+                                      int start, int cur) {
+  blst_msm_scalar element;
+  memcpy(&element, &(scalars[cur]), sizeof(blst_msm_scalar));
 
+  while(cur > start) {
+    int parent = (cur - 1) >> 1;
+    if (compare_scalars(&(scalars[parent].k), &(element.k)) == 0) {
+      break;
+    }
+    memcpy(&(scalars[cur]), &(scalars[parent]), sizeof(blst_msm_scalar));
+    cur = parent;
+  }
+  memcpy(&(scalars[cur]), &element, sizeof(blst_msm_scalar));
+}
 
+/* Sift up */
+static void blst_scalars_max_siftup(blst_msm_scalar* scalars,
+                                    int size,int start) {
+  int cur   = start;
+  int child = (2 * start) + 1; /* left at the start */
+  blst_msm_scalar element;
+  memcpy(&element, &(scalars[start]), sizeof(blst_msm_scalar));
+
+  while (child < size) {
+    int r = child + 1; /* right child */
+    if ((r < size) && !(compare_scalars(&(scalars[r].k), &(scalars[child].k)))){
+      child = r;
+    }
+    memcpy(&(scalars[cur]), &(scalars[child]), sizeof(blst_msm_scalar));
+    cur = child;
+    child = (2 * cur) + 1; /* left child */
+  }
+  memcpy(&(scalars[cur]), &element, sizeof(blst_msm_scalar));
+  blst_scalars_max_siftdown(scalars, start, cur);
+}
+
+/* Max heapify for blst scalars, builds max heap */
+static void blst_scalars_max_heapify(blst_msm_scalar* scalars, int size) {
+  for (int i = ((size - 1) / 2); i >= 0; --i) {
+    blst_scalars_max_siftup(scalars, size, i);
+  }
+}
+
+/* Subtract second highest value from highest value and fix heap */
+static int blst_scalars_max_heapreplace_p1(blst_p1* skipped_result,
+                                           blst_p1* bases,
+                                           blst_msm_scalar* scalars,
+                                           int size) {
+  /* Get the second highest value in the heap */
+  blst_msm_scalar* next_high_scalar = &(scalars[1]);
+
+  if ((size > 2) && compare_scalars(&(scalars[1].k), &(scalars[2].k))) {
+    next_high_scalar = &(scalars[2]);
+  }
+
+  int next_high_bits = blst_scalar_num_bits(&(next_high_scalar->k));
+
+  /* If next highest value is 0, then we are done */
+  if (next_high_bits == 0) {
+    return 0;
+  }
+
+  int high_bits = blst_scalar_num_bits(&(scalars[0].k));
+
+  /* If highest value is much larger, too expensive to keep subtracting */
+  /* p1 mul is ~500k cycles */
+  /* p1 add or double ~2.5k cycles */
+  /* Assume about 200x larger is bad, here we use 2^7+ (128) as cutoff */
+  if ((high_bits - next_high_bits) > 6) {
+    if (!blst_p1_is_inf(skipped_result)) {
+      blst_p1_mult(&(bases[scalars[0].base_index]),
+                   &(bases[scalars[0].base_index]),
+                   (scalars[0].k).b, high_bits);
+      blst_p1_add_or_double(skipped_result, skipped_result,
+                            &(bases[scalars[0].base_index]));
+    }
+    else {
+      blst_p1_mult(skipped_result, &(bases[scalars[0].base_index]),
+                   (scalars[0].k).b, high_bits);
+    }
+    memset(&(scalars[0].k), 0, sizeof(blst_scalar)); /* clear scalar */
+  }
+  else {
+    /* k1 = k1 - k2 */
+    blst_scalar_sub_assign(&(scalars[0].k), &(next_high_scalar->k));
+
+    /* P2 = P1 + P2 */
+    blst_p1_add_or_double(&(bases[next_high_scalar->base_index]),
+                          &(bases[next_high_scalar->base_index]),
+                          &(bases[scalars[0].base_index]));
+  }
+
+  /* Fix heap */
+  blst_scalars_max_siftup(scalars, size, 0);
+  return 1;
+}
+
+/* Subtract second highest value from highest value and fix heap */
+static int blst_scalars_max_heapreplace_p2(blst_p2* skipped_result,
+                                           blst_p2* bases,
+                                           blst_msm_scalar* scalars,
+                                           int size) {
+  /* Get the second highest value in the heap */
+  blst_msm_scalar* next_high_scalar = &(scalars[1]);
+
+  if ((size > 2) && compare_scalars(&(scalars[1].k), &(scalars[2].k))) {
+    next_high_scalar = &(scalars[2]);
+  }
+
+  int next_high_bits = blst_scalar_num_bits(&(next_high_scalar->k));
+
+  /* If next highest value is 0, then we are done */
+  if (next_high_bits == 0) {
+    return 0;
+  }
+
+  int high_bits = blst_scalar_num_bits(&(scalars[0].k));
+
+  /* If highest value is much larger, too expensive to keep subtracting */
+  /* p2 mul is ~1125K cycles */
+  /* p2 add or double ~7k cycles */
+  /* Assume about 160x larger is bad, here we use 2^7+ (128) as cutoff */
+  if ((high_bits - next_high_bits) > 6) {
+    if (!blst_p2_is_inf(skipped_result)) {
+      blst_p2_mult(&(bases[scalars[0].base_index]),
+                   &(bases[scalars[0].base_index]),
+                   (scalars[0].k).b, high_bits);
+      blst_p2_add_or_double(skipped_result, skipped_result,
+                            &(bases[scalars[0].base_index]));
+    }
+    else {
+      blst_p2_mult(skipped_result, &(bases[scalars[0].base_index]),
+                   (scalars[0].k).b, high_bits);
+    }
+    memset(&(scalars[0].k), 0, sizeof(blst_scalar)); /* clear scalar */
+  }
+  else {
+    /* k1 = k1 - k2 */
+    blst_scalar_sub_assign(&(scalars[0].k), &(next_high_scalar->k));
+
+    /* P2 = P1 + P2 */
+    blst_p2_add_or_double(&(bases[next_high_scalar->base_index]),
+                          &(bases[next_high_scalar->base_index]),
+                          &(bases[scalars[0].base_index]));
+  }
+
+  /* Fix heap */
+  blst_scalars_max_siftup(scalars, size, 0);
+  return 1;
+}
 
 
 /* Extract encoded field element byte array into blst_fp object */
-/* TODO - need restrict? */
-static int fp_from_bytes(blst_fp* restrict fp, const byte* in) {
+static int fp_from_bytes(blst_fp* fp, const byte* in) {
   /* Ensure first 16 bytes of field element are zero */
   byte acc_pad = 0;
 
@@ -96,7 +296,7 @@ static int fp_from_bytes(blst_fp* restrict fp, const byte* in) {
   if (acc_mod != 0) {
     return -1;
   }
-  
+
   /* Convert field element to Montgomery form */
   blst_fp_to(fp, fp);
 
@@ -155,8 +355,7 @@ static void encode_g1_point(byte* out, const blst_p1_affine* in) {
 
 
 /* Extract encoded field element byte array into blst_fp2 object */
-/* TODO - need restrict? */
-static int fp2_from_bytes(blst_fp2* restrict fp2, const byte* in) {
+static int fp2_from_bytes(blst_fp2* fp2, const byte* in) {
   /* Extract the c0 and c1 field elements from encoding */
   int fp_c0_status = fp_from_bytes(&(fp2->fp[0]), in);
   int fp_c1_status = fp_from_bytes(&(fp2->fp[1]), in + 64);
@@ -222,11 +421,11 @@ static EIP2537_ERROR decode_scalar(blst_scalar* out, const byte* in) {
 
 /*
   ABI for G1 addition
-  
+
   G1 addition call expects 256 bytes as an input that is interpreted as byte
     concatenation of two G1 points (128 bytes each). Output is an encoding of
     addition operation result - single G1 point (128 bytes).
-  
+
   Error cases:
     Either of points being not on the curve must result in error
     Field elements encoding rules apply (obviously)
@@ -312,7 +511,7 @@ EIP2537_ERROR bls12_g1mul(byte out[128], const byte in[160], size_t in_len) {
 
   /* P = A * scalar */
   blst_p1 p;
-  blst_p1_mult(&p, &a, &scalar, 256);
+  blst_p1_mult(&p, &a, scalar.b, 256);
 
   /* Convert point to affine */
   blst_p1_affine p_aff;
@@ -339,7 +538,6 @@ EIP2537_ERROR bls12_g1mul(byte out[128], const byte in[160], size_t in_len) {
     Input has invalid length
     Input is empty
 */
-/* TODO - modify from very naive approach, ideally use built-in blst */
 EIP2537_ERROR bls12_g1multiexp(byte out[128], byte* in, size_t in_len) {
   /* Check length, is this even necessary? */
   if ((in_len == 0) || ((in_len % 160) != 0)) {
@@ -347,19 +545,46 @@ EIP2537_ERROR bls12_g1multiexp(byte out[128], byte* in, size_t in_len) {
   }
 
   /* Get the number of point/scalar pairs to process */
-  size_t k = in_len / 160;
+  size_t num_pairs = in_len / 160;
+
+  if (num_pairs == 1) {
+    return bls12_g1mul(out, in, in_len);
+  }
+
+  /* Choose naive approach if same number of pairs */
+  if (num_pairs <= 4) {
+    return bls12_g1multiexp_naive(out, in, in_len);
+  }
+  else {
+    return bls12_g1multiexp_bc(out, in, in_len);
+  }
+}
+
+/* Naive implementation of MSM */
+EIP2537_ERROR bls12_g1multiexp_naive(byte out[128], byte* in, size_t in_len) {
+  /* Check length, is this even necessary? */
+  if ((in_len == 0) || ((in_len % 160) != 0)) {
+    return EIP2537_INVALID_LENGTH;
+  }
+
+  /* Get the number of point/scalar pairs to process */
+  size_t num_pairs = in_len / 160;
+
+  if (num_pairs == 1) {
+    return bls12_g1mul(out, in, in_len);
+  }
 
   EIP2537_ERROR ret;
   blst_p1 result = { {{0}}, {{0}}, {{0}} }; /* Infinity */
 
-  for (size_t i = 0; i < k; ++i) {
+  for (size_t i = 0; i < num_pairs; ++i) {
     /* Decode inputs */
     blst_p1_affine a_aff;
     ret = decode_g1_point(&a_aff, in);
     if (ret != EIP2537_SUCCESS) {
       return ret;
     }
-  
+
     blst_scalar scalar;
     ret = decode_scalar(&scalar, in + 128);
     if (ret != EIP2537_SUCCESS) {
@@ -367,14 +592,14 @@ EIP2537_ERROR bls12_g1multiexp(byte out[128], byte* in, size_t in_len) {
     }
 
     in += 160;
-  
+
     /* Input needs to be projective for scalar multiplication function */
     blst_p1 a;
     blst_p1_from_affine(&a, &a_aff);
-  
+
     /* P = A * scalar */
     blst_p1 p;
-    blst_p1_mult(&p, &a, &scalar, 256);
+    blst_p1_mult(&p, &a, scalar.b, 256);
 
     /* result = result + P */
     blst_p1_add_or_double(&result, &result, &p);
@@ -386,6 +611,98 @@ EIP2537_ERROR bls12_g1multiexp(byte out[128], byte* in, size_t in_len) {
 
   /* Encode affine point to EIP format */
   encode_g1_point(out, &p_aff);
+
+  return EIP2537_SUCCESS;
+}
+
+/* Bos-Coster implementation of MSM */
+EIP2537_ERROR bls12_g1multiexp_bc(byte out[128], byte* in, size_t in_len) {
+  /* Check length, is this even necessary? */
+  if ((in_len == 0) || ((in_len % 160) != 0)) {
+    return EIP2537_INVALID_LENGTH;
+  }
+
+  /* Get the number of point/scalar pairs to process */
+  size_t num_pairs = in_len / 160;
+
+  if (num_pairs == 1) {
+    return bls12_g1mul(out, in, in_len);
+  }
+
+  /* Allocate memory for scalars and bases */
+  blst_p1* bases;
+  blst_msm_scalar* scalars;
+
+  bases = (blst_p1*) malloc(num_pairs * sizeof(blst_p1));
+  if (bases == NULL) {
+    return EIP2537_MEMORY_ERROR;
+  }
+
+  scalars = (blst_msm_scalar*) malloc(num_pairs * sizeof(blst_msm_scalar));
+  if (scalars == NULL) {
+    free(bases);
+    return EIP2537_MEMORY_ERROR;
+  }
+
+  EIP2537_ERROR ret;
+
+  /* Decode all inputs and copy into arrays that can be modified */
+  for (size_t i = 0; i < num_pairs; ++i) {
+    /* Decode inputs */
+    blst_p1_affine a_aff;
+    ret = decode_g1_point(&a_aff, in);
+    if (ret != EIP2537_SUCCESS) {
+      free(bases);
+      free(scalars);
+      return ret;
+    }
+
+    /* Input needs to be projective for scalar multiplication function */
+    blst_p1_from_affine(&(bases[i]), &a_aff);
+
+    ret = decode_scalar(&(scalars[i].k), in + 128);
+    if (ret != EIP2537_SUCCESS) {
+      free(bases);
+      free(scalars);
+      return ret;
+    }
+    scalars[i].base_index = i;
+
+    in += 160;
+  }
+
+  /* Build heap */
+  blst_scalars_max_heapify(scalars, num_pairs);
+
+  blst_p1 skipped_result = { {{0}}, {{0}}, {{0}} }; /* Infinity */
+
+  /* Loop until there is only one pair left */
+  while (blst_scalars_max_heapreplace_p1(&skipped_result, bases,
+                                         scalars, num_pairs));
+
+  /* Down to only one point/scalar pair, perform final scalar mul */
+
+  int num_bits_left = blst_scalar_num_bits(&(scalars[0].k));
+  blst_p1 result;
+  blst_p1_mult(&result, &(bases[scalars[0].base_index]),
+               (scalars[0].k).b, num_bits_left);
+
+  /* In case any values needed to be skipped over in bc due to deltas */
+  if (!blst_p1_is_inf(&skipped_result)) {
+    /* result = result + skipped_result */
+    blst_p1_add_or_double(&result, &result, &skipped_result);
+  }
+
+  /* Convert result point to affine */
+  blst_p1_affine p_aff;
+  blst_p1_to_affine(&p_aff, &result);
+
+  /* Encode affine point to EIP format */
+  encode_g1_point(out, &p_aff);
+
+  /* Free allocated memory */
+  free(bases);
+  free(scalars);
 
   return EIP2537_SUCCESS;
 }
@@ -482,7 +799,7 @@ EIP2537_ERROR bls12_g2mul(byte out[256], const byte in[288], size_t in_len) {
 
   /* P = A * scalar */
   blst_p2 p;
-  blst_p2_mult(&p, &a, &scalar, 256);
+  blst_p2_mult(&p, &a, scalar.b, 256);
 
   /* Convert point to affine */
   blst_p2_affine p_aff;
@@ -509,7 +826,6 @@ EIP2537_ERROR bls12_g2mul(byte out[256], const byte in[288], size_t in_len) {
     Input has invalid length
     Input is empty
 */
-/* TODO - modify from very naive approach, ideally use built-in blst */
 EIP2537_ERROR bls12_g2multiexp(byte out[256], byte* in, size_t in_len) {
   /* Check length, is this even necessary? */
   if ((in_len == 0) || ((in_len % 288) != 0)) {
@@ -517,21 +833,47 @@ EIP2537_ERROR bls12_g2multiexp(byte out[256], byte* in, size_t in_len) {
   }
 
   /* Get the number of point/scalar pairs to process */
-  size_t k = in_len / 288;
+  size_t num_pairs = in_len / 288;
+
+  if (num_pairs == 1) {
+    return bls12_g2mul(out, in, in_len);
+  }
+
+  /* Choose naive approach if same number of pairs */
+  if (num_pairs <= 4) {
+    return bls12_g2multiexp_naive(out, in, in_len);
+  }
+  else {
+    return bls12_g2multiexp_bc(out, in, in_len);
+  }
+}
+
+EIP2537_ERROR bls12_g2multiexp_naive(byte out[256], byte* in, size_t in_len) {
+  /* Check length, is this even necessary? */
+  if ((in_len == 0) || ((in_len % 288) != 0)) {
+    return EIP2537_INVALID_LENGTH;
+  }
+
+  /* Get the number of point/scalar pairs to process */
+  size_t num_pairs = in_len / 288;
+
+  if (num_pairs == 1) {
+    return bls12_g2mul(out, in, in_len);
+  }
 
   EIP2537_ERROR ret;
 
   /* Infinity */
   blst_p2 result = { {{{{0}}, {{0}}}}, {{{{0}}, {{0}}}}, {{{{0}}, {{0}}}} };
 
-  for (size_t i = 0; i < k; ++i) {
+  for (size_t i = 0; i < num_pairs; ++i) {
     /* Decode inputs */
     blst_p2_affine a_aff;
     ret = decode_g2_point(&a_aff, in);
     if (ret != EIP2537_SUCCESS) {
       return ret;
     }
-  
+
     blst_scalar scalar;
     ret = decode_scalar(&scalar, in + 256);
     if (ret != EIP2537_SUCCESS) {
@@ -539,14 +881,14 @@ EIP2537_ERROR bls12_g2multiexp(byte out[256], byte* in, size_t in_len) {
     }
 
     in += 288;
-  
+
     /* Input needs to be projective for scalar multiplication function */
     blst_p2 a;
     blst_p2_from_affine(&a, &a_aff);
-  
+
     /* P = A * scalar */
     blst_p2 p;
-    blst_p2_mult(&p, &a, &scalar, 256);
+    blst_p2_mult(&p, &a, scalar.b, 256);
 
     /* result = result + P */
     blst_p2_add_or_double(&result, &result, &p);
@@ -558,6 +900,99 @@ EIP2537_ERROR bls12_g2multiexp(byte out[256], byte* in, size_t in_len) {
 
   /* Encode affine point to EIP format */
   encode_g2_point(out, &p_aff);
+
+  return EIP2537_SUCCESS;
+}
+
+/* Bos-Coster implementation of MSM */
+EIP2537_ERROR bls12_g2multiexp_bc(byte out[256], byte* in, size_t in_len) {
+  /* Check length, is this even necessary? */
+  if ((in_len == 0) || ((in_len % 288) != 0)) {
+    return EIP2537_INVALID_LENGTH;
+  }
+
+  /* Get the number of point/scalar pairs to process */
+  size_t num_pairs = in_len / 288;
+
+  if (num_pairs == 1) {
+    return bls12_g2mul(out, in, in_len);
+  }
+
+  /* Allocate memory for scalars and bases */
+  blst_p2* bases;
+  blst_msm_scalar* scalars;
+
+  bases = (blst_p2*) malloc(num_pairs * sizeof(blst_p2));
+  if (bases == NULL) {
+    return EIP2537_MEMORY_ERROR;
+  }
+
+  scalars = (blst_msm_scalar*) malloc(num_pairs * sizeof(blst_msm_scalar));
+  if (scalars == NULL) {
+    free(bases);
+    return EIP2537_MEMORY_ERROR;
+  }
+
+  EIP2537_ERROR ret;
+
+  /* Decode all inputs and copy into arrays that can be modified */
+  for (size_t i = 0; i < num_pairs; ++i) {
+    /* Decode inputs */
+    blst_p2_affine a_aff;
+    ret = decode_g2_point(&a_aff, in);
+    if (ret != EIP2537_SUCCESS) {
+      free(bases);
+      free(scalars);
+      return ret;
+    }
+
+    /* Input needs to be projective for scalar multiplication function */
+    blst_p2_from_affine(&(bases[i]), &a_aff);
+
+    ret = decode_scalar(&(scalars[i].k), in + 256);
+    if (ret != EIP2537_SUCCESS) {
+      free(bases);
+      free(scalars);
+      return ret;
+    }
+    scalars[i].base_index = i;
+
+    in += 288;
+  }
+
+  /* Build heap */
+  blst_scalars_max_heapify(scalars, num_pairs);
+
+  blst_p2 skipped_result = { {{{{0}}, {{0}}}},
+                             {{{{0}}, {{0}}}},
+                             {{{{0}}, {{0}}}} }; /* Infinity */
+
+  /* Loop until there is only one pair left */
+  while (blst_scalars_max_heapreplace_p2(&skipped_result, bases,
+                                         scalars, num_pairs));
+
+  /* Down to only one point/scalar pair, perform final scalar mul */
+  int num_bits_left = blst_scalar_num_bits(&(scalars[0].k));
+  blst_p2 result;
+  blst_p2_mult(&result, &(bases[scalars[0].base_index]),
+               (scalars[0].k).b, num_bits_left);
+
+  /* In case any values needed to be skipped over in bc due to deltas */
+  if (!blst_p2_is_inf(&skipped_result)) {
+    /* result = result + skipped_result */
+    blst_p2_add_or_double(&result, &result, &skipped_result);
+  }
+
+  /* Convert result point to affine */
+  blst_p2_affine p_aff;
+  blst_p2_to_affine(&p_aff, &result);
+
+  /* Encode affine point to EIP format */
+  encode_g2_point(out, &p_aff);
+
+  /* Free allocated memory */
+  free(bases);
+  free(scalars);
 
   return EIP2537_SUCCESS;
 }
@@ -581,7 +1016,7 @@ EIP2537_ERROR bls12_g2multiexp(byte out[256], byte* in, size_t in_len) {
     Input has invalid length
     Input is empty
 */
-/* TODO - parallelize */
+/* TODO - parallelize if better performance is required */
 EIP2537_ERROR bls12_pairing(byte out[32], byte* in, size_t in_len) {
   /* Check length, is this even necessary? */
   if ((in_len == 0) || ((in_len % 384) != 0)) {
@@ -616,7 +1051,7 @@ EIP2537_ERROR bls12_pairing(byte out[32], byte* in, size_t in_len) {
     if(!blst_p2_affine_in_g2(&p2_aff)) {
       return EIP2537_POINT_NOT_IN_SUBGROUP;
     }
-  
+
     in += 384;
 
     if (i > 0) {
@@ -784,7 +1219,7 @@ uint64_t bls12_g1multiexp_gas(uint64_t input_len) {
   else {
     discount = BLS12_MULTIEXP_DISCOUNT[BLS12_MULTIEXP_DISCOUNT_TABLE_LEN - 1];
   }
-  
+
   return (uint64_t)((k * BLS12_G1MUL_GAS * discount) /
                     BLS12_MULTIEXP_MULTIPLIER_GAS);
 };
@@ -812,7 +1247,7 @@ uint64_t bls12_g2multiexp_gas(uint64_t input_len) {
   else {
     discount = BLS12_MULTIEXP_DISCOUNT[BLS12_MULTIEXP_DISCOUNT_TABLE_LEN - 1];
   }
-  
+
   return (uint64_t)((k * BLS12_G2MUL_GAS * discount) /
                     BLS12_MULTIEXP_MULTIPLIER_GAS);
 };

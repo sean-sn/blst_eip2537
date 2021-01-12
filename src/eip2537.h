@@ -36,15 +36,20 @@ typedef enum {
   EIP2537_ENCODING_ERROR,
   EIP2537_INVALID_LENGTH,
   EIP2537_EMPTY_INPUT,
+  EIP2537_MEMORY_ERROR,
 } EIP2537_ERROR;
 
 EIP2537_ERROR bls12_g1add(byte out[128], const byte in[256], size_t in_len);
 EIP2537_ERROR bls12_g1mul(byte out[128], const byte in[160], size_t in_len);
 EIP2537_ERROR bls12_g1multiexp(byte out[128], byte* in, size_t in_len);
+EIP2537_ERROR bls12_g1multiexp_naive(byte out[128], byte* in, size_t in_len);
+EIP2537_ERROR bls12_g1multiexp_bc(byte out[128], byte* in, size_t in_len);
 
 EIP2537_ERROR bls12_g2add(byte out[256], const byte in[512], size_t in_len);
 EIP2537_ERROR bls12_g2mul(byte out[256], const byte in[288], size_t in_len);
 EIP2537_ERROR bls12_g2multiexp(byte out[256], byte* in, size_t in_len);
+EIP2537_ERROR bls12_g2multiexp_naive(byte out[256], byte* in, size_t in_len);
+EIP2537_ERROR bls12_g2multiexp_bc(byte out[256], byte* in, size_t in_len);
 
 EIP2537_ERROR bls12_pairing(byte out[32], byte* in, size_t in_len);
 

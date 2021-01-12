@@ -13,6 +13,7 @@ const EIP2537_INVALID_ELEMENT: EIP2537_ERROR = 3;
 const EIP2537_ENCODING_ERROR: EIP2537_ERROR = 4;
 const EIP2537_INVALID_LENGTH: EIP2537_ERROR = 5;
 const EIP2537_EMPTY_INPUT: EIP2537_ERROR = 6;
+const EIP2537_MEMORY_ERROR: EIP2537_ERROR = 7;
 
 extern "C" {
     pub fn bls12_g1add(
@@ -33,6 +34,18 @@ extern "C" {
         in_len: usize,
     ) -> EIP2537_ERROR;
 
+    pub fn bls12_g1multiexp_naive(
+        out: *mut byte,
+        input: *const byte,
+        in_len: usize,
+    ) -> EIP2537_ERROR;
+
+    pub fn bls12_g1multiexp_bc(
+        out: *mut byte,
+        input: *const byte,
+        in_len: usize,
+    ) -> EIP2537_ERROR;
+
     pub fn bls12_g2add(
         out: *mut byte,
         input: *const byte,
@@ -46,6 +59,18 @@ extern "C" {
     ) -> EIP2537_ERROR;
 
     pub fn bls12_g2multiexp(
+        out: *mut byte,
+        input: *const byte,
+        in_len: usize,
+    ) -> EIP2537_ERROR;
+
+    pub fn bls12_g2multiexp_naive(
+        out: *mut byte,
+        input: *const byte,
+        in_len: usize,
+    ) -> EIP2537_ERROR;
+
+    pub fn bls12_g2multiexp_bc(
         out: *mut byte,
         input: *const byte,
         in_len: usize,
@@ -82,6 +107,7 @@ impl blstEIP2537Executor {
             EIP2537_ENCODING_ERROR => "encoding error",
             EIP2537_INVALID_LENGTH => "invalid length",
             EIP2537_EMPTY_INPUT => "empty input",
+            EIP2537_MEMORY_ERROR => "memory allocation error",
             _ => "unknown error condition",
         }
     }
@@ -128,6 +154,46 @@ impl blstEIP2537Executor {
         Ok(output)
     }
 
+    pub fn g1_multiexp_naive<'a>(
+        input: &'a [u8],
+    ) -> Result<[u8; 128], &'static str> {
+        let mut output = [0u8; 128];
+
+        let err = unsafe {
+            bls12_g1multiexp_naive(
+                output.as_mut_ptr(),
+                input.as_ptr(),
+                input.len(),
+            )
+        };
+
+        if err != EIP2537_SUCCESS {
+            return Err(blstEIP2537Executor::decode_eip2537_error(err));
+        }
+
+        Ok(output)
+    }
+
+    pub fn g1_multiexp_bc<'a>(
+        input: &'a [u8],
+    ) -> Result<[u8; 128], &'static str> {
+        let mut output = [0u8; 128];
+
+        let err = unsafe {
+            bls12_g1multiexp_bc(
+                output.as_mut_ptr(),
+                input.as_ptr(),
+                input.len(),
+            )
+        };
+
+        if err != EIP2537_SUCCESS {
+            return Err(blstEIP2537Executor::decode_eip2537_error(err));
+        }
+
+        Ok(output)
+    }
+
     pub fn g2_add<'a>(input: &'a [u8]) -> Result<[u8; 256], &'static str> {
         let mut output = [0u8; 256];
 
@@ -161,6 +227,46 @@ impl blstEIP2537Executor {
 
         let err = unsafe {
             bls12_g2multiexp(output.as_mut_ptr(), input.as_ptr(), input.len())
+        };
+
+        if err != EIP2537_SUCCESS {
+            return Err(blstEIP2537Executor::decode_eip2537_error(err));
+        }
+
+        Ok(output)
+    }
+
+    pub fn g2_multiexp_naive<'a>(
+        input: &'a [u8],
+    ) -> Result<[u8; 256], &'static str> {
+        let mut output = [0u8; 256];
+
+        let err = unsafe {
+            bls12_g2multiexp_naive(
+                output.as_mut_ptr(),
+                input.as_ptr(),
+                input.len(),
+            )
+        };
+
+        if err != EIP2537_SUCCESS {
+            return Err(blstEIP2537Executor::decode_eip2537_error(err));
+        }
+
+        Ok(output)
+    }
+
+    pub fn g2_multiexp_bc<'a>(
+        input: &'a [u8],
+    ) -> Result<[u8; 256], &'static str> {
+        let mut output = [0u8; 256];
+
+        let err = unsafe {
+            bls12_g2multiexp_bc(
+                output.as_mut_ptr(),
+                input.as_ptr(),
+                input.len(),
+            )
         };
 
         if err != EIP2537_SUCCESS {
@@ -310,6 +416,26 @@ mod tests {
     }
 
     #[test]
+    fn test_g1multiexp_naive() {
+        let p = "../test_vectors/g1_multiexp.csv";
+        let f = |input: &[u8]| {
+            blstEIP2537Executor::g1_multiexp_naive(input).map(|r| r.to_vec())
+        };
+        let success = run_on_test_inputs(p, true, f);
+        assert!(success);
+    }
+
+    #[test]
+    fn test_g1multiexp_bc() {
+        let p = "../test_vectors/g1_multiexp.csv";
+        let f = |input: &[u8]| {
+            blstEIP2537Executor::g1_multiexp_bc(input).map(|r| r.to_vec())
+        };
+        let success = run_on_test_inputs(p, true, f);
+        assert!(success);
+    }
+
+    #[test]
     fn test_g2add() {
         let p = "../test_vectors/g2_add.csv";
         let f = |input: &[u8]| {
@@ -344,6 +470,26 @@ mod tests {
         let p = "../test_vectors/g2_multiexp.csv";
         let f = |input: &[u8]| {
             blstEIP2537Executor::g2_multiexp(input).map(|r| r.to_vec())
+        };
+        let success = run_on_test_inputs(p, true, f);
+        assert!(success);
+    }
+
+    #[test]
+    fn test_g2multiexp_naive() {
+        let p = "../test_vectors/g2_multiexp.csv";
+        let f = |input: &[u8]| {
+            blstEIP2537Executor::g2_multiexp_naive(input).map(|r| r.to_vec())
+        };
+        let success = run_on_test_inputs(p, true, f);
+        assert!(success);
+    }
+
+    #[test]
+    fn test_g2multiexp_bc() {
+        let p = "../test_vectors/g2_multiexp.csv";
+        let f = |input: &[u8]| {
+            blstEIP2537Executor::g2_multiexp_bc(input).map(|r| r.to_vec())
         };
         let success = run_on_test_inputs(p, true, f);
         assert!(success);

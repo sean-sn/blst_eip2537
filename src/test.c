@@ -181,6 +181,7 @@ int test_g1_multi_exp() {
   byte* in;
   byte out[128];
   byte act_out[128];
+  byte act_out_bc[128];
   EIP2537_ERROR err;
 
   ssize_t in_len = 0;
@@ -211,6 +212,17 @@ int test_g1_multi_exp() {
     }
 
     if (!bytes_are_equal(out, act_out, 128)) {
+      printf("ERROR not equal\n");
+      return -1;
+    }
+
+    err = bls12_g1multiexp_bc(act_out_bc, in, (in_len >> 1));
+    if (err != EIP2537_SUCCESS) {
+      printf("ERROR %d\n", err);
+      return -1;
+    }
+
+    if (!bytes_are_equal(out, act_out_bc, 128)) {
       printf("ERROR not equal\n");
       return -1;
     }

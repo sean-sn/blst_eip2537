@@ -85,6 +85,20 @@ fn bench_g1(c: &mut Criterion) {
                 b.iter(|| blstEIP2537Executor::g1_multiexp(&p));
             },
         );
+        group.bench_with_input(
+            BenchmarkId::new("g1_multiexp_naive", n),
+            &pairs_for_multiexp,
+            |b, p| {
+                b.iter(|| blstEIP2537Executor::g1_multiexp_naive(&p));
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new("g1_multiexp_bc", n),
+            &pairs_for_multiexp,
+            |b, p| {
+                b.iter(|| blstEIP2537Executor::g1_multiexp_bc(&p));
+            },
+        );
     }
 
     group.finish();
@@ -117,8 +131,7 @@ fn bench_g2(c: &mut Criterion) {
         b.iter(|| blstEIP2537Executor::g2_mul(&g2_for_mul));
     });
 
-    let multiexp_sizes =
-        vec![2, 4, 8, 16, 32, 64, 128, 256, 512, 1024];
+    let multiexp_sizes = vec![2, 4, 8, 16, 32, 64, 128, 256, 512, 1024];
     for n in multiexp_sizes.iter() {
         let mut pairs_for_multiexp = Vec::with_capacity(288 * n);
 
@@ -134,6 +147,20 @@ fn bench_g2(c: &mut Criterion) {
             &pairs_for_multiexp,
             |b, p| {
                 b.iter(|| blstEIP2537Executor::g2_multiexp(&p));
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new("g2_multiexp_naive", n),
+            &pairs_for_multiexp,
+            |b, p| {
+                b.iter(|| blstEIP2537Executor::g2_multiexp_naive(&p));
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new("g2_multiexp_bc", n),
+            &pairs_for_multiexp,
+            |b, p| {
+                b.iter(|| blstEIP2537Executor::g2_multiexp_bc(&p));
             },
         );
     }
@@ -190,11 +217,5 @@ fn bench_map(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_g1,
-    bench_g2,
-    bench_pairing,
-    bench_map
-);
+criterion_group!(benches, bench_g1, bench_g2, bench_pairing, bench_map);
 criterion_main!(benches);

@@ -157,6 +157,14 @@ func TestG1Multiexp(t *testing.T) {
 	testJson("../test_vectors/blsG1MultiExp.json", true, G1Multiexp, t)
 }
 
+func TestG1MultiexpNaive(t *testing.T) {
+	testJson("../test_vectors/blsG1MultiExp.json", true, G1MultiexpNaive, t)
+}
+
+func TestG1MultiexpBosCoster(t *testing.T) {
+	testJson("../test_vectors/blsG1MultiExp.json", true, G1MultiexpBosCoster, t)
+}
+
 func TestG2Add(t *testing.T) {
 	testJson("../test_vectors/blsG2Add.json", true, G2Add, t)
 }
@@ -167,6 +175,14 @@ func TestG2Mul(t *testing.T) {
 
 func TestG2Multiexp(t *testing.T) {
 	testJson("../test_vectors/blsG2MultiExp.json", true, G2Multiexp, t)
+}
+
+func TestG2MultiexpNaive(t *testing.T) {
+	testJson("../test_vectors/blsG2MultiExp.json", true, G2MultiexpNaive, t)
+}
+
+func TestG2MultiexpBosCoster(t *testing.T) {
+	testJson("../test_vectors/blsG2MultiExp.json", true, G2MultiexpBosCoster, t)
 }
 
 func TestPairing(t *testing.T) {

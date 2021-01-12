@@ -32,6 +32,8 @@ func decodeEip2537Error(err C.EIP2537_ERROR) string {
 		err_str = "invalid length"
 	case C.EIP2537_EMPTY_INPUT:
 		err_str = "empty input"
+	case C.EIP2537_MEMORY_ERROR:
+		err_str = "memory allocation error"
 	default:
 		err_str = "unknown error condition"
 	}
@@ -78,6 +80,32 @@ func G1Multiexp(input []byte) ([]byte, error) {
 	return output, nil
 }
 
+func G1MultiexpNaive(input []byte) ([]byte, error) {
+	if len(input) == 0 {
+		return nil, errors.New(decodeEip2537Error(C.EIP2537_INVALID_LENGTH))
+	}
+	output := make([]byte, 128)
+	err := C.bls12_g1multiexp_naive((*C.byte)(&output[0]), (*C.byte)(&input[0]),
+		C.size_t(len(input)))
+	if err != C.EIP2537_SUCCESS {
+		return nil, errors.New(decodeEip2537Error(err))
+	}
+	return output, nil
+}
+
+func G1MultiexpBosCoster(input []byte) ([]byte, error) {
+	if len(input) == 0 {
+		return nil, errors.New(decodeEip2537Error(C.EIP2537_INVALID_LENGTH))
+	}
+	output := make([]byte, 128)
+	err := C.bls12_g1multiexp_bc((*C.byte)(&output[0]), (*C.byte)(&input[0]),
+		C.size_t(len(input)))
+	if err != C.EIP2537_SUCCESS {
+		return nil, errors.New(decodeEip2537Error(err))
+	}
+	return output, nil
+}
+
 func G2Add(input []byte) ([]byte, error) {
 	if len(input) == 0 {
 		return nil, errors.New(decodeEip2537Error(C.EIP2537_INVALID_LENGTH))
@@ -110,6 +138,32 @@ func G2Multiexp(input []byte) ([]byte, error) {
 	}
 	output := make([]byte, 256)
 	err := C.bls12_g2multiexp((*C.byte)(&output[0]), (*C.byte)(&input[0]),
+		C.size_t(len(input)))
+	if err != C.EIP2537_SUCCESS {
+		return nil, errors.New(decodeEip2537Error(err))
+	}
+	return output, nil
+}
+
+func G2MultiexpNaive(input []byte) ([]byte, error) {
+	if len(input) == 0 {
+		return nil, errors.New(decodeEip2537Error(C.EIP2537_INVALID_LENGTH))
+	}
+	output := make([]byte, 256)
+	err := C.bls12_g2multiexp_naive((*C.byte)(&output[0]), (*C.byte)(&input[0]),
+		C.size_t(len(input)))
+	if err != C.EIP2537_SUCCESS {
+		return nil, errors.New(decodeEip2537Error(err))
+	}
+	return output, nil
+}
+
+func G2MultiexpBosCoster(input []byte) ([]byte, error) {
+	if len(input) == 0 {
+		return nil, errors.New(decodeEip2537Error(C.EIP2537_INVALID_LENGTH))
+	}
+	output := make([]byte, 256)
+	err := C.bls12_g2multiexp_bc((*C.byte)(&output[0]), (*C.byte)(&input[0]),
 		C.size_t(len(input)))
 	if err != C.EIP2537_SUCCESS {
 		return nil, errors.New(decodeEip2537Error(err))
